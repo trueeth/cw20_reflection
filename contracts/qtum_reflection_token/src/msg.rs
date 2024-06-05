@@ -104,6 +104,9 @@ pub enum ExecuteMsg {
     },
     /// If set as the "marketing" role on the contract, upload a new URL, SVG, or PNG for the token
     UploadLogo(Logo),
+    SetBuyBack {
+        enable: bool
+    },
     SetTaxRate {
         global_rate: Decimal,
         reflection_rate: Decimal,
@@ -112,6 +115,9 @@ pub enum ExecuteMsg {
     SetPair {
         contract: String,
         enable: bool,
+    },
+    SetTreasury {
+        contract: String,
     },
     TransferEvent {
         from: String,

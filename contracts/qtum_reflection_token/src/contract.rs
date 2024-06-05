@@ -1,5 +1,4 @@
 use std::ops::{Mul, Sub};
-use std::str::FromStr;
 
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
@@ -15,7 +14,7 @@ use cw20_base::allowances::{
     query_allowance,
 };
 use cw20_base::contract::{
-    create_accounts, execute_burn, execute_mint, execute_update_marketing, execute_upload_logo,
+    create_accounts, execute_burn,  execute_update_marketing, execute_upload_logo,
     query_balance, query_download_logo, query_marketing_info, query_minter, query_token_info,
 };
 use cw20_base::enumerable::{query_all_accounts, query_all_allowances};
@@ -34,12 +33,12 @@ const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const TAX_RATE: Item<Decimal> = Item::new("tax_rate");
 pub const REFLECTION_RATE: Item<Decimal> = Item::new("reflection_rate");
 pub const BURN_RATE: Item<Decimal> = Item::new("burn_rate");
-pub const MAX_TRANSFER_SUPPLY_RATE: Item<Decimal> = Item::new("max_transfer_supply_rate");
 
 pub const ADMIN: Item<String> = Item::new("admin");
 pub const LAST_LIQUIFY: Item<u64> = Item::new("last_liquify");
 pub const TREASURY: Item<String> = Item::new("treasury");
 pub const PAIRLIST: Map<String, bool> = Map::new("pairlist");
+pub const BUYBACK_ENABLE: Item<bool> = Item::new("buyback_enable");
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
@@ -57,8 +56,8 @@ pub fn instantiate(
     TAX_RATE.save(deps.storage, &Decimal::zero())?;
     REFLECTION_RATE.save(deps.storage, &Decimal::zero())?;
     BURN_RATE.save(deps.storage, &Decimal::zero())?;
-    MAX_TRANSFER_SUPPLY_RATE.save(deps.storage, &Decimal::from_str("1")?)?;
     PAIRLIST.save(deps.storage, info.sender.to_string(), &true)?;
+    BUYBACK_ENABLE.save(deps.storage, &false)?;
 
     // create initial accounts
     let total_supply = create_accounts(&mut deps, &msg.initial_balances)?;
@@ -169,15 +168,18 @@ pub fn execute_transfer(
             },
         )?;
 
-        messages.push(WasmMsg::Execute {
-            contract_addr: env.contract.address.to_string(),
-            msg: to_json_binary(&ExecuteMsg::TransferEvent {
-                from: info.sender.to_string(),
-                to: treasury.to_string(),
-                amount: taxes.taxed_amount,
-            })?,
-            funds: vec![],
-        })
+        let buyback_enabled = BUYBACK_ENABLE.may_load(deps.storage)?.unwrap_or_default();
+        if buyback_enabled {
+            messages.push(WasmMsg::Execute {
+                contract_addr: env.contract.address.to_string(),
+                msg: to_json_binary(&ExecuteMsg::TransferEvent {
+                    from: info.sender.to_string(),
+                    to: treasury.to_string(),
+                    amount: taxes.taxed_amount,
+                })?,
+                funds: vec![],
+            })
+        }
     }
 
     let res = Response::new()
@@ -239,15 +241,18 @@ pub fn execute_send(
             },
         )?;
 
-        messages.push(WasmMsg::Execute {
-            contract_addr: env.contract.address.to_string(),
-            msg: to_json_binary(&ExecuteMsg::TransferEvent {
-                from: info.sender.to_string(),
-                to: treasury.to_string(),
-                amount: taxes.taxed_amount,
-            })?,
-            funds: vec![],
-        })
+        let buyback_enabled = BUYBACK_ENABLE.may_load(deps.storage)?.unwrap_or_default();
+        if buyback_enabled {
+            messages.push(WasmMsg::Execute {
+                contract_addr: env.contract.address.to_string(),
+                msg: to_json_binary(&ExecuteMsg::TransferEvent {
+                    from: info.sender.to_string(),
+                    to: treasury.to_string(),
+                    amount: taxes.taxed_amount,
+                })?,
+                funds: vec![],
+            })
+        }        
     }
 
     let res = Response::new()
@@ -318,15 +323,18 @@ pub fn execute_transfer_from(
             },
         )?;
 
-        messages.push(WasmMsg::Execute {
-            contract_addr: env.contract.address.to_string(),
-            msg: to_json_binary(&ExecuteMsg::TransferEvent {
-                from: info.sender.to_string(),
-                to: treasury.to_string(),
-                amount: taxes.taxed_amount,
-            })?,
-            funds: vec![],
-        })
+        let buyback_enabled = BUYBACK_ENABLE.may_load(deps.storage)?.unwrap_or_default();
+        if buyback_enabled {
+            messages.push(WasmMsg::Execute {
+                contract_addr: env.contract.address.to_string(),
+                msg: to_json_binary(&ExecuteMsg::TransferEvent {
+                    from: info.sender.to_string(),
+                    to: treasury.to_string(),
+                    amount: taxes.taxed_amount,
+                })?,
+                funds: vec![],
+            })
+        }           
     }
 
     let res = Response::new().add_messages(messages).add_attributes(vec![
@@ -391,15 +399,19 @@ pub fn execute_send_from(
             },
         )?;
 
-        messages.push(WasmMsg::Execute {
-            contract_addr: env.contract.address.to_string(),
-            msg: to_json_binary(&ExecuteMsg::TransferEvent {
-                from: info.sender.to_string(),
-                to: treasury.to_string(),
-                amount: taxes.taxed_amount,
-            })?,
-            funds: vec![],
-        })
+
+        let buyback_enabled = BUYBACK_ENABLE.may_load(deps.storage)?.unwrap_or_default();
+        if buyback_enabled {
+            messages.push(WasmMsg::Execute {
+                contract_addr: env.contract.address.to_string(),
+                msg: to_json_binary(&ExecuteMsg::TransferEvent {
+                    from: info.sender.to_string(),
+                    to: treasury.to_string(),
+                    amount: taxes.taxed_amount,
+                })?,
+                funds: vec![],
+            })
+        }         
     }
 
     let attrs = vec![
@@ -424,6 +436,43 @@ pub fn execute_send_from(
         .add_attributes(attrs);
     Ok(res)
 }
+
+
+pub fn execute_mint(
+    deps: DepsMut,
+    _env: Env,
+    info: MessageInfo,
+    recipient: String,
+    amount: Uint128,
+) -> Result<Response, ContractError> {
+    if amount == Uint128::zero() {
+        return Err(ContractError::InvalidZeroAmount {});
+    }
+
+    ensure_admin(&deps, &info)?;
+
+    let mut config = TOKEN_INFO.load(deps.storage)?;
+ 
+    // update supply and enforce cap
+    config.total_supply += amount;
+
+    TOKEN_INFO.save(deps.storage, &config)?;
+
+    // add amount to recipient balance
+    let rcpt_addr = deps.api.addr_validate(&recipient)?;
+    BALANCES.update(
+        deps.storage,
+        &rcpt_addr,
+        |balance: Option<Uint128>| -> StdResult<_> { Ok(balance.unwrap_or_default() + amount) },
+    )?;
+
+    let res = Response::new()
+        .add_attribute("action", "mint")
+        .add_attribute("to", recipient)
+        .add_attribute("amount", amount);
+    Ok(res)
+}
+
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn execute(
@@ -473,6 +522,7 @@ pub fn execute(
         ExecuteMsg::UploadLogo(logo) => execute_upload_logo(deps, env, info, logo),
 
         // Reflection features
+        ExecuteMsg::SetTreasury { contract } => set_treasury(deps, info, contract),
         ExecuteMsg::SetPair { contract, enable } => set_pairlist(deps, info, contract, enable),
         ExecuteMsg::SetTaxRate {
             global_rate,
@@ -486,6 +536,7 @@ pub fn execute(
             reflection_rate,
             burn_rate
         ),
+        ExecuteMsg::SetBuyBack { enable } => set_buyback(deps, info, enable),
         ExecuteMsg::TransferEvent { from, to, amount } => {
             generate_transfer_event(deps, info, env, from, to, amount)
         }
@@ -587,16 +638,40 @@ pub fn set_tax_rate(
     Ok(Response::default())
 }
 
+/// Set treasury address
+pub fn set_treasury(
+    deps: DepsMut,
+    info: MessageInfo,
+    contract: String
+) -> Result<Response, ContractError> {
+    ensure_admin(&deps, &info)?;
+    deps.api.addr_validate(&contract.to_string())?;
+    TREASURY.save(deps.storage, &contract)?;
+    Ok(Response::default())
+}
+
+
+/// Start buyback
+pub fn set_buyback(
+    deps: DepsMut,
+    info: MessageInfo,
+    enable: bool
+) -> Result<Response, ContractError> {
+    ensure_admin(&deps, &info)?;
+    BUYBACK_ENABLE.save(deps.storage, &enable)?;
+    Ok(Response::default())
+}
+
 /// Sets pair address (taxed)
 pub fn set_pairlist(
     deps: DepsMut,
     info: MessageInfo,
-    user: String,
+    contract: String,
     enable: bool,
 ) -> Result<Response, ContractError> {
     ensure_admin(&deps, &info)?;
-    deps.api.addr_validate(&user.to_string())?;
-    PAIRLIST.save(deps.storage, user.to_string(), &enable)?;
+    deps.api.addr_validate(&contract.to_string())?;
+    PAIRLIST.save(deps.storage, contract.to_string(), &enable)?;
     Ok(Response::default())
 }
 
