@@ -1,11 +1,10 @@
 [package]
-name = "cw20-reflection-token"
-version = "0.0.0"
+name = "qtum-treasury"
+version = "1.0.0"
 authors = []
 edition = "2018"
-description = "Backward compatible implementation of a CosmWasm-20 compliant reflection token"
+description = ""
 license = "MIT"
-repository = "https://github.com/dojoswap/cw20-reflection"
 homepage = "https://cosmwasm.com"
 documentation = "https://docs.cosmwasm.com"
 

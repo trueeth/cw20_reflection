@@ -29,7 +29,7 @@ use cw20_base::ContractError;
 use cw_storage_plus::{Item, Map};
 
 // version info for migration info
-const CONTRACT_NAME: &str = "dojoswap:reflection";
+const CONTRACT_NAME: &str = "qtum:reflection";
 const CONTRACT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub const TAX_RATE: Item<Decimal> = Item::new("tax_rate");
@@ -151,7 +151,6 @@ pub fn execute_transfer(
     recipient: String,
     amount: Uint128,
 ) -> Result<Response, ContractError> {
-    ensure_antiwhale(&deps, info.sender.to_string(), amount)?;
     if amount == Uint128::zero() {
         return Err(ContractError::InvalidZeroAmount {});
     }
@@ -226,7 +225,6 @@ pub fn execute_send(
     amount: Uint128,
     msg: Binary,
 ) -> Result<Response, ContractError> {
-    ensure_antiwhale(&deps, info.sender.to_string(), amount)?;
     if amount == Uint128::zero() {
         return Err(ContractError::InvalidZeroAmount {});
     }
@@ -305,7 +303,6 @@ pub fn execute_transfer_from(
     recipient: String,
     amount: Uint128,
 ) -> Result<Response, ContractError> {
-    ensure_antiwhale(&deps, info.sender.to_string(), amount)?;
     let is_from_whitelisted = TRANSFER_FROM_WHITELIST
         .may_load(deps.storage, info.sender.to_string())?
         .unwrap_or(false);
@@ -380,7 +377,6 @@ pub fn execute_send_from(
     amount: Uint128,
     msg: Binary,
 ) -> Result<Response, ContractError> {
-    ensure_antiwhale(&deps, info.sender.to_string(), amount)?;
     let is_from_whitelisted = TRANSFER_FROM_WHITELIST
         .may_load(deps.storage, info.sender.to_string())?
         .unwrap_or(false);
@@ -658,25 +654,6 @@ pub fn ensure_admin(deps: &DepsMut, info: &MessageInfo) -> Result<Response, Cont
     Ok(Response::default())
 }
 
-/// This is used to prevent whales from moving more than 2% of supply at once
-pub fn ensure_antiwhale(
-    deps: &DepsMut,
-    from: String,
-    transfer_balance: Uint128,
-) -> Result<Response, ContractError> {
-    let token_info = TOKEN_INFO.may_load(deps.storage)?.unwrap();
-    let transfer_rate = MAX_TRANSFER_SUPPLY_RATE.may_load(deps.storage)?.unwrap();
-    let whitelist = WHITELIST.may_load(deps.storage, from)?.unwrap_or(false);
-
-    // Whitelisted contracts can bypass antiwhale, inclusive of treasury contract
-    if transfer_balance >= token_info.total_supply.mul(transfer_rate) && !whitelist {
-        return Err(ContractError::Std(StdError::generic_err(
-            "Unauthorized: anti-whale triggered",
-        )));
-    }
-
-    Ok(Response::default())
-}
 
 /// This is used to generate a transfer event to treasury contract (so that explorer tracks transfer events properly, and balances shows up correctly)
 /// This is also used to trigger liquify (every 10 seconds) -> prevents recursive liquify that can cause out of gas

@@ -273,42 +273,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cw20-reflection-token"
-version = "0.0.0"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cosmwasm-storage",
- "cw-storage-plus",
- "cw0",
- "cw2",
- "cw20",
- "cw20-base",
- "dojoswap",
- "schemars",
- "serde",
- "thiserror",
-]
-
-[[package]]
-name = "cw20-reflection-treasury"
-version = "0.0.0"
-dependencies = [
- "cosmwasm-schema",
- "cosmwasm-std",
- "cosmwasm-storage",
- "cw-storage-plus",
- "cw0",
- "cw2",
- "cw20",
- "cw20-base",
- "dojoswap",
- "schemars",
- "serde",
- "thiserror",
-]
-
-[[package]]
 name = "der"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -557,6 +521,42 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "45604fc7a88158e7d514d8e22e14ac746081e7a70d7690074dd0029ee37458d6"
 dependencies = [
  "bytes",
+]
+
+[[package]]
+name = "qtum-reflection-token"
+version = "1.0.0"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cosmwasm-storage",
+ "cw-storage-plus",
+ "cw0",
+ "cw2",
+ "cw20",
+ "cw20-base",
+ "dojoswap",
+ "schemars",
+ "serde",
+ "thiserror",
+]
+
+[[package]]
+name = "qtum-treasury"
+version = "1.0.0"
+dependencies = [
+ "cosmwasm-schema",
+ "cosmwasm-std",
+ "cosmwasm-storage",
+ "cw-storage-plus",
+ "cw0",
+ "cw2",
+ "cw20",
+ "cw20-base",
+ "dojoswap",
+ "schemars",
+ "serde",
+ "thiserror",
 ]
 
 [[package]]
