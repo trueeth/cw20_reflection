@@ -4,8 +4,8 @@ use std::str::FromStr;
 #[cfg(not(feature = "library"))]
 use cosmwasm_std::entry_point;
 use cosmwasm_std::{
-    attr, to_json_binary, Binary, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, Reply,
-    Response, StdError, StdResult, Storage, SubMsg, SubMsgResponse, Uint128, WasmMsg,
+    attr, to_json_binary, Binary, CosmosMsg, Decimal, Deps, DepsMut, Env, MessageInfo, 
+    Response, StdError, StdResult, Storage,   Uint128, WasmMsg,
 };
 
 use cw2::set_contract_version;
@@ -22,7 +22,6 @@ use cw20_base::enumerable::{query_all_accounts, query_all_allowances};
 
 use crate::msg::{
     ExecuteMsg, InstantiateMsg, MigrateMsg, QueryMsg, QueryTaxResponse, TreasuryExecuteMsg,
-    TreasuryInstantiateMsg,
 };
 use cw20_base::state::{MinterData, TokenInfo, BALANCES, LOGO, MARKETING_INFO, TOKEN_INFO};
 use cw20_base::ContractError;
@@ -40,27 +39,26 @@ pub const MAX_TRANSFER_SUPPLY_RATE: Item<Decimal> = Item::new("max_transfer_supp
 pub const ADMIN: Item<String> = Item::new("admin");
 pub const LAST_LIQUIFY: Item<u64> = Item::new("last_liquify");
 pub const TREASURY: Item<String> = Item::new("treasury");
-pub const WHITELIST: Map<String, bool> = Map::new("whitelist");
-pub const TRANSFER_FROM_WHITELIST: Map<String, bool> = Map::new("transfer_from_whitelist");
+pub const PAIRLIST: Map<String, bool> = Map::new("pairlist");
 
 #[cfg_attr(not(feature = "library"), entry_point)]
 pub fn instantiate(
     mut deps: DepsMut,
-    env: Env,
+    _env: Env,
     info: MessageInfo,
     msg: InstantiateMsg,
 ) -> Result<Response, ContractError> {
     set_contract_version(deps.storage, CONTRACT_NAME, CONTRACT_VERSION)?;
     // check valid token info
     msg.validate()?;
-    deps.api.addr_validate(&msg.admin.to_string())?;
-    ADMIN.save(deps.storage, &msg.admin.to_string())?;
+
+    ADMIN.save(deps.storage, &info.sender.to_string())?;
 
     TAX_RATE.save(deps.storage, &Decimal::zero())?;
     REFLECTION_RATE.save(deps.storage, &Decimal::zero())?;
     BURN_RATE.save(deps.storage, &Decimal::zero())?;
     MAX_TRANSFER_SUPPLY_RATE.save(deps.storage, &Decimal::from_str("1")?)?;
-    WHITELIST.save(deps.storage, info.sender.to_string(), &true)?;
+    PAIRLIST.save(deps.storage, info.sender.to_string(), &true)?;
 
     // create initial accounts
     let total_supply = create_accounts(&mut deps, &msg.initial_balances)?;
@@ -113,36 +111,10 @@ pub fn instantiate(
 
     TOKEN_INFO.save(deps.storage, &data)?;
 
-    Ok(Response::new().add_submessage(SubMsg::reply_on_success(
-        CosmosMsg::Wasm(WasmMsg::Instantiate {
-            admin: Some(env.contract.address.to_string()), // use the owner as admin for now; can be changed later by a `MsgUpdateAdmin`
-            code_id: msg.cw20_code_id,
-            msg: to_json_binary(&TreasuryInstantiateMsg {
-                admin: msg.admin.to_string(),
-                router: msg.router.to_string(),
-                token: env.contract.address.clone(),
-            })?,
-            funds: vec![],
-            label: "CW20 Taxed - Treasury".to_string(),
-        }),
-        1,
-    )))
+    Ok(Response::default())
 }
 
-/// Unwrap a `Reply` object to extract the response
-pub fn unwrap_reply(reply: Reply) -> StdResult<SubMsgResponse> {
-    reply.result.into_result().map_err(StdError::generic_err)
-}
-
-#[entry_point]
-pub fn reply(deps: DepsMut, _env: Env, reply: Reply) -> Result<Response, ContractError> {
-    match reply.id {
-        1 => register_deployment(deps, unwrap_reply(reply)?),
-        _id => Err(ContractError::Unauthorized {}),
-    }
-}
-
-/// Standard CW20 transfer function that is modified to include tax functions, and anti-whale feature
+/// Standard CW20 transfer function that is modified to include tax functions
 /// These modifications are all applied to the `transfer`, `send`, `transfer_from`, and `send_from` functions
 pub fn execute_transfer(
     deps: DepsMut,
@@ -155,19 +127,19 @@ pub fn execute_transfer(
         return Err(ContractError::InvalidZeroAmount {});
     }
     // If whitelisetd, we simply do not apply taxes
-    let recipient_whitelist = WHITELIST
+    let to_pair = PAIRLIST
         .may_load(deps.storage, recipient.clone())?
         .unwrap_or_default();
-    let sender_whitelist = WHITELIST
+    let from_pair = PAIRLIST
         .may_load(deps.storage, info.sender.to_string())?
         .unwrap_or_default();
-    let whitelisted = recipient_whitelist || sender_whitelist;
+    let is_pair = to_pair || from_pair;
 
     // Loads treasury addresses, and query for taxes on transfers
     let treasury = TREASURY.may_load(deps.storage)?.unwrap_or_default();
     let rcpt_addr = deps.api.addr_validate(&recipient)?;
     let taxes = query_tax(deps.storage, amount)?;
-    let outgoing_amount = if whitelisted { amount } else { taxes.after_tax };
+    let outgoing_amount = if is_pair { taxes.after_tax } else { amount };
 
     BALANCES.update(
         deps.storage,
@@ -186,9 +158,9 @@ pub fn execute_transfer(
 
     let mut messages = vec![];
 
-    // Assuming no whitelist, we apply taxes, and immediately add them to the treasury by modifying balance variables
+    // we apply taxes, and immediately add them to the treasury by modifying balance variables
     // We also send generate a transfer teransaction log under `TransferEvent` to ensure explorer tracks transfer properly
-    if !recipient_whitelist && !sender_whitelist {
+    if is_pair {
         BALANCES.update(
             deps.storage,
             &deps.api.addr_validate(&treasury)?,
@@ -228,17 +200,17 @@ pub fn execute_send(
     if amount == Uint128::zero() {
         return Err(ContractError::InvalidZeroAmount {});
     }
-    let recipient_whitelist = WHITELIST
+    let to_pair = PAIRLIST
         .may_load(deps.storage, contract.clone())?
         .unwrap_or_default();
-    let sender_whitelist = WHITELIST
+    let from_pair = PAIRLIST
         .may_load(deps.storage, info.sender.to_string())?
         .unwrap_or_default();
-    let whitelisted = recipient_whitelist || sender_whitelist;
+    let is_pair = to_pair || from_pair;
     let treasury = TREASURY.may_load(deps.storage)?.unwrap_or_default();
     let rcpt_addr = deps.api.addr_validate(&contract)?;
     let taxes = query_tax(deps.storage, amount)?;
-    let outgoing_amount = if whitelisted { amount } else { taxes.after_tax };
+    let outgoing_amount = if is_pair { taxes.after_tax } else { amount };
 
     // move the tokens to the contract
     BALANCES.update(
@@ -257,7 +229,8 @@ pub fn execute_send(
     )?;
 
     let mut messages = vec![];
-    if !recipient_whitelist && !sender_whitelist {
+
+    if is_pair {
         BALANCES.update(
             deps.storage,
             &deps.api.addr_validate(&treasury)?,
@@ -303,21 +276,19 @@ pub fn execute_transfer_from(
     recipient: String,
     amount: Uint128,
 ) -> Result<Response, ContractError> {
-    let is_from_whitelisted = TRANSFER_FROM_WHITELIST
-        .may_load(deps.storage, info.sender.to_string())?
-        .unwrap_or(false);
-    let recipient_whitelist = WHITELIST
+    
+    let to_pair = PAIRLIST
         .may_load(deps.storage, recipient.clone())?
         .unwrap_or_default();
-    let sender_whitelist = WHITELIST
+    let from_pair = PAIRLIST
         .may_load(deps.storage, info.sender.to_string())?
         .unwrap_or_default();
-    let whitelisted = recipient_whitelist || sender_whitelist || is_from_whitelisted;
+    let is_pair = to_pair || from_pair;
     let treasury = TREASURY.may_load(deps.storage)?.unwrap_or_default();
     let rcpt_addr = deps.api.addr_validate(&recipient)?;
     let owner_addr = deps.api.addr_validate(&owner)?;
     let taxes = query_tax(deps.storage, amount)?;
-    let outgoing_amount = if whitelisted { amount } else { taxes.after_tax };
+    let outgoing_amount = if is_pair { taxes.after_tax } else { amount };
 
     // deduct allowance before doing anything else have enough allowance
     deduct_allowance(deps.storage, &owner_addr, &info.sender, &env.block, amount)?;
@@ -338,7 +309,7 @@ pub fn execute_transfer_from(
     )?;
 
     let mut messages = vec![];
-    if !recipient_whitelist && !sender_whitelist && !is_from_whitelisted {
+    if is_pair {
         BALANCES.update(
             deps.storage,
             &deps.api.addr_validate(&treasury)?,
@@ -377,21 +348,19 @@ pub fn execute_send_from(
     amount: Uint128,
     msg: Binary,
 ) -> Result<Response, ContractError> {
-    let is_from_whitelisted = TRANSFER_FROM_WHITELIST
-        .may_load(deps.storage, info.sender.to_string())?
-        .unwrap_or(false);
-    let recipient_whitelist = WHITELIST
+   
+    let to_pair = PAIRLIST
         .may_load(deps.storage, contract.clone())?
         .unwrap_or_default();
-    let sender_whitelist = WHITELIST
+    let from_pair = PAIRLIST
         .may_load(deps.storage, info.sender.to_string())?
         .unwrap_or_default();
-    let whitelisted = recipient_whitelist || sender_whitelist || is_from_whitelisted;
+    let is_pair = to_pair || from_pair ;
     let treasury = TREASURY.may_load(deps.storage)?.unwrap_or_default();
     let rcpt_addr = deps.api.addr_validate(&contract)?;
     let owner_addr = deps.api.addr_validate(&owner)?;
     let taxes = query_tax(deps.storage, amount)?;
-    let outgoing_amount = if whitelisted { amount } else { taxes.after_tax };
+    let outgoing_amount = if is_pair { taxes.after_tax  } else { amount };
 
     // deduct allowance before doing anything else have enough allowance
     deduct_allowance(deps.storage, &owner_addr, &info.sender, &env.block, amount)?;
@@ -413,7 +382,7 @@ pub fn execute_send_from(
     )?;
 
     let mut messages = vec![];
-    if !recipient_whitelist && !sender_whitelist && !is_from_whitelisted {
+    if is_pair  {
         BALANCES.update(
             deps.storage,
             &deps.api.addr_validate(&treasury)?,
@@ -504,20 +473,18 @@ pub fn execute(
         ExecuteMsg::UploadLogo(logo) => execute_upload_logo(deps, env, info, logo),
 
         // Reflection features
-        ExecuteMsg::SetWhitelist { user, enable } => set_whitelist(deps, info, user, enable),
+        ExecuteMsg::SetPair { contract, enable } => set_pairlist(deps, info, contract, enable),
         ExecuteMsg::SetTaxRate {
             global_rate,
             reflection_rate,
             burn_rate,
-            antiwhale_rate,
         } => set_tax_rate(
             deps,
             env,
             info,
             global_rate,
             reflection_rate,
-            burn_rate,
-            antiwhale_rate,
+            burn_rate
         ),
         ExecuteMsg::TransferEvent { from, to, amount } => {
             generate_transfer_event(deps, info, env, from, to, amount)
@@ -548,7 +515,7 @@ pub fn query(deps: Deps, _env: Env, msg: QueryMsg) -> StdResult<Binary> {
         QueryMsg::QueryTax { amount } => to_json_binary(&query_tax(deps.storage, amount)?),
         QueryMsg::QueryRates {} => to_json_binary(&query_rate(deps.storage)?),
         QueryMsg::GetWhitelist { address } => {
-            to_json_binary(&query_whitelist(deps.storage, address)?)
+            to_json_binary(&query_pairlist(deps.storage, address)?)
         }
     }
 }
@@ -574,19 +541,18 @@ pub fn query_tax(storage: &dyn Storage, amount: Uint128) -> Result<QueryTaxRespo
 }
 
 /// Returns the current tax rates
-pub fn query_rate(storage: &dyn Storage) -> Result<(Decimal, Decimal, Decimal, Decimal), StdError> {
+pub fn query_rate(storage: &dyn Storage) -> Result<(Decimal, Decimal, Decimal), StdError> {
     let tax_rate = TAX_RATE.may_load(storage)?.unwrap();
     let reflection_rate = REFLECTION_RATE.may_load(storage)?.unwrap();
     let burn_rate = BURN_RATE.may_load(storage)?.unwrap();
-    let transfer_rate = MAX_TRANSFER_SUPPLY_RATE.may_load(storage)?.unwrap();
 
-    Ok((tax_rate, reflection_rate, burn_rate, transfer_rate))
+    Ok((tax_rate, reflection_rate, burn_rate))
 }
 
-pub fn query_whitelist(storage: &dyn Storage, address: String) -> Result<bool, StdError> {
-    let whitelist = WHITELIST.may_load(storage, address)?.unwrap();
+pub fn query_pairlist(storage: &dyn Storage, address: String) -> Result<bool, StdError> {
+    let pairlist = PAIRLIST.may_load(storage, address)?.unwrap();
 
-    Ok(whitelist)
+    Ok(pairlist)
 }
 
 /// Global rate is number between 0 to 1. 0.1 refers to 10% taxes on all transfers
@@ -600,7 +566,6 @@ pub fn set_tax_rate(
     global_rate: Decimal,
     reflection_rate: Decimal,
     burn_rate: Decimal,
-    antiwhale_rate: Decimal,
 ) -> Result<Response, ContractError> {
     ensure_admin(&deps, &info)?;
 
@@ -616,21 +581,14 @@ pub fn set_tax_rate(
         )));
     }
 
-    if antiwhale_rate > Decimal::one() {
-        return Err(ContractError::Std(StdError::generic_err(
-            "antiwhale_rate max of 1",
-        )));
-    }
-
     TAX_RATE.save(deps.storage, &global_rate)?;
     REFLECTION_RATE.save(deps.storage, &reflection_rate)?;
     BURN_RATE.save(deps.storage, &burn_rate)?;
-    MAX_TRANSFER_SUPPLY_RATE.save(deps.storage, &antiwhale_rate)?;
     Ok(Response::default())
 }
 
-/// Sets which addresses are whitelisted (not taxed)
-pub fn set_whitelist(
+/// Sets pair address (taxed)
+pub fn set_pairlist(
     deps: DepsMut,
     info: MessageInfo,
     user: String,
@@ -638,7 +596,7 @@ pub fn set_whitelist(
 ) -> Result<Response, ContractError> {
     ensure_admin(&deps, &info)?;
     deps.api.addr_validate(&user.to_string())?;
-    WHITELIST.save(deps.storage, user.to_string(), &enable)?;
+    PAIRLIST.save(deps.storage, user.to_string(), &enable)?;
     Ok(Response::default())
 }
 
@@ -719,42 +677,4 @@ pub fn migrate_treasury(
             })?,
         })),
     )
-}
-
-/// This is used to register the TREASURY address for liquifying of CW20 token
-/// Also whitelists the treasury to make sure treasury is not succumb to taxes
-pub fn register_deployment(
-    deps: DepsMut,
-    response: SubMsgResponse,
-) -> Result<Response, ContractError> {
-    // cosmwasm.wasm.v1.EventContractInstantiated
-    let event = response
-        .events
-        .iter()
-        .find(|event| {
-            event
-                .ty
-                .contains("cosmwasm.wasm.v1.EventContractInstantiated")
-                || event.ty.contains("cosmwasm.wasm.v1.MsgInstantiateContract")
-                || event.ty == "instantiate"
-        })
-        .ok_or(StdError::generic_err("Cannot find instantiate event"))?;
-
-    let contract_addr_str = &event
-        .attributes
-        .iter()
-        .find(|attr| {
-            attr.key == "_contract_address"
-                || attr.key == "_contract_addr"
-                || attr.key == "contract_address"
-        })
-        .ok_or(StdError::generic_err("Cannot find contract address"))?
-        .value;
-
-    let contract_addr = deps.api.addr_validate(contract_addr_str)?;
-
-    TREASURY.save(deps.storage, &contract_addr.to_string())?;
-    WHITELIST.save(deps.storage, contract_addr.to_string(), &true)?;
-
-    Ok(Response::new())
 }

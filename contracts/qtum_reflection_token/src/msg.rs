@@ -17,10 +17,8 @@ pub struct InstantiateMsg {
     pub name: String,
     pub symbol: String,
     pub decimals: u8,
-    pub cw20_code_id: u64,
     pub initial_balances: Vec<Cw20Coin>,
     pub admin: String,
-    pub router: String,
     pub mint: Option<MinterResponse>,
     pub marketing: Option<InstantiateMarketingInfo>,
 }
@@ -109,11 +107,10 @@ pub enum ExecuteMsg {
     SetTaxRate {
         global_rate: Decimal,
         reflection_rate: Decimal,
-        burn_rate: Decimal,
-        antiwhale_rate: Decimal,
+        burn_rate: Decimal
     },
-    SetWhitelist {
-        user: String,
+    SetPair {
+        contract: String,
         enable: bool,
     },
     TransferEvent {
