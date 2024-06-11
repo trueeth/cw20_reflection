@@ -55,8 +55,7 @@ pub fn instantiate(
 
     TAX_RATE.save(deps.storage, &Decimal::zero())?;
     REFLECTION_RATE.save(deps.storage, &Decimal::zero())?;
-    BURN_RATE.save(deps.storage, &Decimal::zero())?;
-    PAIRLIST.save(deps.storage, info.sender.to_string(), &true)?;
+    BURN_RATE.save(deps.storage, &Decimal::zero())?;    
     BUYBACK_ENABLE.save(deps.storage, &false)?;
 
     // create initial accounts
